@@ -547,7 +547,7 @@ def train_online_probe(
                 )
 
             # Forward pass on positive examples
-            with torch.autocast(device_type=device):
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
                 if adversarial_training and current_step >= start_adv_training_at_step:
                     # Print this out at the first adversarial training step
                     if current_step == start_adv_training_at_step:
@@ -643,7 +643,7 @@ def train_online_probe(
             # Compute the positive probe losses using probe mask
             pos_loss = 0
             for layer, probe in probes.items():
-                with torch.autocast(device_type=device):
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
                     pos_targets = torch.ones_like(
                         pos_acts[layer][..., 0], device=device
                     )
@@ -661,7 +661,7 @@ def train_online_probe(
                 wrapper.enabled = False
 
             # Forward pass on negative examples
-            with torch.autocast(device_type=device):
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
                 neg_output = lora_model(
                     input_ids=neg_batch_input_ids,
                     output_hidden_states=True,
@@ -674,7 +674,7 @@ def train_online_probe(
             # Compute the negative probe losses using probe mask
             neg_loss = 0
             for layer, probe in probes.items():
-                with torch.autocast(device_type=device):
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
                     neg_targets = torch.zeros_like(
                         neg_acts[layer][..., 0], device=device
                     )
@@ -806,4 +806,4 @@ def save_probes(probes, save_path):
 
 def load_probes(load_path):
     # Load a list of probes from a file
-    return torch.load(load_path)
+    return torch.load(load_path, weights_only=False)

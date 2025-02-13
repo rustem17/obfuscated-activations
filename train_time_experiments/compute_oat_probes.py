@@ -13,6 +13,7 @@ import numpy as np
 
 # Third-party library imports
 import torch
+from torch import nn
 from datasets import load_dataset
 from src.probe_training import *
 
@@ -181,11 +182,13 @@ def main():
 
     args = parse_args()
     probes_folder = "./probe_weights_comp_only"
-    model_type = "llama3"
+    model_type = "gemma2"
     masking_type = args.masking_type
     use_lora_probes = not args.no_lora_probes
-    name = f"llama3_lora_oat_{masking_type}_{'nonlinear' if args.probe_type == 'nonlinear' else 'linear'}"
+    name = f"{model_type}_lora_oat_{masking_type}_{'nonlinear' if args.probe_type == 'nonlinear' else 'linear'}"
 
+    os.makedirs(probes_folder, exist_ok=True)
+    
     # Load model and dataset
     if model_type == "llama3":
         encoder = EleutherSparseAutoencoder.load_llama3_sae(None, instruct=True)
