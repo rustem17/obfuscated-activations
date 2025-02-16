@@ -833,3 +833,81 @@ class DeepmindSparseAutoencoder(SparseAutoencoder):
             *args,
             **kwargs,
         )
+
+
+class QwenCoderWrapper(SparseAutoencoder):
+    """
+    A wrapper for Qwen/Qwen2.5-Coder model that provides the same interface
+    as the other SAE wrappers, but currently without any SAE functionality.
+    """
+    def __init__(self, model, tokenizer):
+        # Here we use a dummy hook_name since there is no specialized submodule for SAE.
+        # We set n_features to the hidden dimension (from model.config.hidden_size)
+        # and max_k to None.
+        super().__init__(model=model,
+                            tokenizer=tokenizer,
+                            hook_name="qwen_last_hidden_state",
+                            n_features=model.config.hidden_size,
+                            max_k=None)
+        # (Optionally, you might store additional model-specific parameters here.)
+
+    def featurize(self, tokens, masks=None):
+        """
+        Run a forward pass on the Qwen model and return a dictionary with a tuple of
+        (dummy latent indices, activations). In this simple version we do not perform any
+        sparse encoding: we simply return the last hidden states (or whichever activation you choose).
+        """
+        n_batch, n_pos = tokens.shape
+        with torch.no_grad():
+            # Run the model
+            # In this example we assume that Qwen returns either output.hidden_states or output.last_hidden_state.
+            # Adjust as appropriate for the Qwen model.
+            outputs = self.model(input_ids=tokens.to(self.model.device),
+                                    attention_mask=(masks.to(self.model.device) if masks is not None else None))
+            if hasattr(outputs, "hidden_states") and outputs.hidden_states is not None:
+                # For example, use the last layer's hidden state
+                acts = outputs.hidden_states[-1]
+            else:
+                acts = outputs.last_hidden_state
+
+            # Create dummy indices (here we just produce zeros with an extra dimension)
+            dummy_indices = torch.zeros((n_batch, n_pos, 1), dtype=torch.long)
+
+            # Process the activations: e.g. we can zero-out the BOS tokens if needed
+            latent_acts = self._zero_bos_acts(tokens, acts.cpu())
+        return {self.hook_name: (dummy_indices, latent_acts)}
+
+    def encode(self, acts):
+        """
+        Since we are not currently using an SAE, we simply return dummy indices (all zeros)
+        and return the activations unmodified.
+        """
+        acts = self._fix_input_shape(acts)
+        dummy_indices = torch.zeros(acts.shape[:-1] + (1,), dtype=torch.long)
+        return dummy_indices, acts
+
+    def reconstruct(self, acts):
+        """
+        With no SAE present, reconstruction is simply passing the activations through.
+        """
+        return acts
+
+    def get_codebook(self, hook_name):
+        """
+        There is no codebook because there is no SAE. Return None.
+        """
+        return None
+
+    @staticmethod
+    def load_qwen_coder(model_name=None, device="cuda", *args, **kwargs):
+        """
+        Convenience loader for Qwen/Qwen2.5-Coder. If no model_name is provided,
+        one can set a default (adjust as needed). This uses the utility function to load
+        the model and tokenizer.
+        """
+        from .utils import load_hf_model_and_tokenizer
+        if model_name is None:
+            # Replace the default with the appropriate identifier on Hugging Face.
+            model_name = "your-org/Qwen2.5-Coder-7B-Instruct"
+        model, tokenizer = load_hf_model_and_tokenizer(model_name, device_map=device)
+        return QwenCoderWrapper(model, tokenizer)
