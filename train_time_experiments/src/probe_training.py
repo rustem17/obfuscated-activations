@@ -104,7 +104,7 @@ def train_layer(
                 break
 
             # Train the probe on the batch of activations
-            with torch.autocast(device_type=device):
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
                 probe.train()
 
                 # Load the batch onto the device, and create masks for zero padding
@@ -464,6 +464,11 @@ def train_online_probe(
     negative_input_ids = negative_tokens["input_ids"]
     negative_attention_mask = negative_tokens["attention_mask"]
 
+    print("positive attention_mask:", positive_attention_mask)
+    print("negative attention mask:", negative_attention_mask)
+
+    print("only_return_on_tokens_between=", only_return_on_tokens_between)
+
     # Target mask - where we compute the main loss
     if only_return_on_tokens_between is not None:
         zero_positive_mask = get_valid_token_mask(
@@ -475,6 +480,11 @@ def train_online_probe(
     else:
         zero_positive_mask = torch.ones_like(positive_input_ids).bool()
         zero_negative_mask = torch.ones_like(negative_input_ids).bool()
+
+    print("Mask for positive example (sum):", zero_positive_mask[0].sum().item())
+    print("Mask for negative example (sum):", zero_negative_mask[0].sum().item())
+
+    print("only_probe_tokens_between=", only_probe_tokens_between)
 
     # Probe mask - where we compute probe measurements
     if only_probe_tokens_between is not None:
@@ -488,6 +498,8 @@ def train_online_probe(
         # If no probe mask specified, use the target mask
         probe_positive_mask = zero_positive_mask
         probe_negative_mask = zero_negative_mask
+
+    print("only_choose_prompt_tokens_between=", only_choose_prompt_tokens_between)
 
     # This is only relevant for adversarial training
     if only_choose_prompt_tokens_between is not None:
@@ -540,6 +552,19 @@ def train_online_probe(
             # Get probe masks for the batch
             pos_batch_probe_mask = probe_positive_mask[batch_perm].to(device).bool()
             neg_batch_probe_mask = probe_negative_mask[batch_perm].to(device).bool()
+
+            # print("Positive input IDs:", positive_input_ids[0])
+            # print("Decoded text:", encoder.tokenizer.decode(positive_input_ids[0]))
+
+            # print("Special token new line:", encoder.tokenizer.convert_tokens_to_ids("\n"))
+            # print("Special token user:", encoder.tokenizer.convert_tokens_to_ids("user"))
+            # print("Special token model:", encoder.tokenizer.convert_tokens_to_ids("model"))
+            # print("Special token <start_of_turn>:", encoder.tokenizer.convert_tokens_to_ids("<start_of_turn>"))
+            # print("Special token <end_of_turn>:", encoder.tokenizer.convert_tokens_to_ids("<end_of_turn>"))
+
+            # print("Special token <start_of_turn>user:", encoder.tokenizer.convert_tokens_to_ids("<start_of_turn>user"))
+            # print("Special token <end_of_turn>:", encoder.tokenizer.convert_tokens_to_ids("<end_of_turn>"))
+            # print("Special token <start_of_turn>model:", encoder.tokenizer.convert_tokens_to_ids("<start_of_turn>model"))
 
             if pos_only_choose_mask is not None:
                 pos_batch_only_choose_mask = (
@@ -644,6 +669,20 @@ def train_online_probe(
             pos_loss = 0
             for layer, probe in probes.items():
                 with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    # Make sure shapes line up:
+                    print(f"[DEBUG] step={current_step} (POS) layer={layer}")
+                    print("  pos_acts[layer] shape:", pos_acts[layer].shape)
+                    print("  pos_batch_probe_mask shape:", pos_batch_probe_mask.shape)
+                    # You might also look at how many tokens are actually selected:
+                    print("  probe_mask sum:", pos_batch_probe_mask.sum().item())
+
+                    # Potentially call probe.forward(...) separately so you can inspect logits:
+                    logits = probe.forward(pos_acts[layer])
+                    print("  logits shape:", logits.shape)
+                    # If it is not huge, also check min/max:
+                    print("  logits min:", float(logits.min().item()),
+                            " logits max:", float(logits.max().item()))
+
                     pos_targets = torch.ones_like(
                         pos_acts[layer][..., 0], device=device
                     )
@@ -675,6 +714,15 @@ def train_online_probe(
             neg_loss = 0
             for layer, probe in probes.items():
                 with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    print(f"[DEBUG] step={current_step} (NEG) layer={layer}")
+                    print("  neg_acts[layer] shape:", neg_acts[layer].shape)
+                    print("  neg_batch_probe_mask shape:", neg_batch_probe_mask.shape)
+                    print("  probe_mask sum:", neg_batch_probe_mask.sum().item())
+
+                    logits = probe.forward(neg_acts[layer])
+                    print("  logits shape:", logits.shape)
+                    print("  logits min:", float(logits.min().item()),
+                            " logits max:", float(logits.max().item()))
                     neg_targets = torch.zeros_like(
                         neg_acts[layer][..., 0], device=device
                     )

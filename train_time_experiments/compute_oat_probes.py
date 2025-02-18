@@ -29,7 +29,7 @@ def parse_args():
         "--masking-type",
         type=str,
         choices=["instruction", "generation"],
-        default="generation",
+        default="instruction",
         help="Type of masking to use (instruction or generation)",
     )
     parser.add_argument(
@@ -115,62 +115,153 @@ def split_dataset(dataset, train_ratio=0.9, val_ratio=0.1, test_ratio=0.0):
     return train_set, val_set, test_set
 
 
-def is_token_after_assistant(seq_idx, token, tokens):
-    ASSISTANT_TOKEN = 78191
-    return seq_idx >= 1 and tokens[seq_idx - 1] == ASSISTANT_TOKEN
+# def is_token_after_assistant(seq_idx, token, tokens):
+#     ASSISTANT_TOKEN = 78191
+#     return seq_idx >= 1 and tokens[seq_idx - 1] == ASSISTANT_TOKEN
 
+
+# def is_at_newline_after_assistant(seq_idx, token, tokens):
+#     NEWLINE_TOKEN = 271
+#     ASSISTANT_TOKEN = 78191
+#     return (
+#         seq_idx >= 2
+#         and tokens[seq_idx - 2] == ASSISTANT_TOKEN
+#         and token == NEWLINE_TOKEN
+#     )
+
+
+# def is_at_newline_after_user(seq_idx, token, tokens):
+#     NEWLINE_TOKEN = 271
+#     USER_TOKEN = 882
+#     return seq_idx >= 2 and tokens[seq_idx - 2] == USER_TOKEN and token == NEWLINE_TOKEN
+
+
+# def is_at_token_after_newline(seq_idx, token, tokens):
+#     NEWLINE_TOKEN = 271
+#     return seq_idx >= 1 and tokens[seq_idx - 1] == NEWLINE_TOKEN
+
+
+# def get_token_ranges(masking_type):
+#     INSTRUCTION_START = 128000
+#     INSTRUCTION_END = 128009
+
+#     if masking_type == "generation":
+#         return {
+#             "only_return_on_tokens_between": [
+#                 is_at_newline_after_assistant,
+#                 INSTRUCTION_END,
+#             ],
+#             "only_choose_prompt_tokens_between": [
+#                 is_at_newline_after_user,
+#                 INSTRUCTION_END,
+#             ],
+#             "only_probe_tokens_between": [is_token_after_assistant, INSTRUCTION_END],
+#         }
+
+#     elif masking_type == "instruction":
+#         return {
+#             "only_return_on_tokens_between": [
+#                 is_at_newline_after_assistant,
+#                 INSTRUCTION_END,
+#             ],
+#             "only_choose_prompt_tokens_between": [
+#                 is_at_newline_after_user,
+#                 INSTRUCTION_END,
+#             ],
+#             "only_probe_tokens_between": [
+#                 is_token_after_assistant,
+#                 is_at_token_after_newline,
+#             ],
+#         }
+#     else:
+#         raise ValueError(f"Unknown masking_type: {masking_type}")
+
+# # llama3
+# USER_TOKEN = 882          # 'user'
+# ASSISTANT_TOKEN = 78191   # 'model'
+# START_OF_TURN_TOKEN = 128000  # <start_of_turn>
+# END_OF_TURN_TOKEN   = 128009  # <end_of_turn>
+# NEWLINE_TOKEN       = 271  # If your tokenizer truly uses 271 for '\n'
+
+# gemma2
+USER_TOKEN = 1645        # 'user'
+ASSISTANT_TOKEN = 2516   # 'model'
+START_OF_TURN_TOKEN = 106  # <start_of_turn>
+END_OF_TURN_TOKEN   = 107  # <end_of_turn>
+NEWLINE_TOKEN       = 108  # If your tokenizer truly uses 271 for '\n'
+# ---------------------------------------------------------------------------
+
+# Example: "token is after assistant if the previous token == ASSISTANT_TOKEN"
+def is_token_after_assistant(seq_idx, token, tokens):
+    return seq_idx >= 2 and tokens[seq_idx - 1] == ASSISTANT_TOKEN and tokens[seq_idx - 2] == START_OF_TURN_TOKEN
+
+def is_token_after_user(seq_idx, token, tokens):
+    return seq_idx >= 2 and tokens[seq_idx - 1] == USER_TOKEN and tokens[seq_idx - 2] == START_OF_TURN_TOKEN
 
 def is_at_newline_after_assistant(seq_idx, token, tokens):
-    NEWLINE_TOKEN = 271
-    ASSISTANT_TOKEN = 78191
     return (
-        seq_idx >= 2
-        and tokens[seq_idx - 2] == ASSISTANT_TOKEN
+        seq_idx >= 1
+        and tokens[seq_idx - 1] == ASSISTANT_TOKEN
         and token == NEWLINE_TOKEN
     )
 
-
 def is_at_newline_after_user(seq_idx, token, tokens):
-    NEWLINE_TOKEN = 271
-    USER_TOKEN = 882
-    return seq_idx >= 2 and tokens[seq_idx - 2] == USER_TOKEN and token == NEWLINE_TOKEN
-
+    return (
+        seq_idx >= 1
+        and tokens[seq_idx - 1] == USER_TOKEN
+        and token == NEWLINE_TOKEN
+    )
 
 def is_at_token_after_newline(seq_idx, token, tokens):
-    NEWLINE_TOKEN = 271
     return seq_idx >= 1 and tokens[seq_idx - 1] == NEWLINE_TOKEN
 
 
 def get_token_ranges(masking_type):
-    INSTRUCTION_START = 128000
-    INSTRUCTION_END = 128009
+    """
+    This is your original structure, but with the old 128000/128009 replaced
+    by <start_of_turn> = 106 and <end_of_turn> = 107.
+
+    You can tweak which functions or IDs define start/end, depending on
+    whether "instruction" or "generation" means user vs. assistant tokens.
+    """
+
+    INSTRUCTION_START = START_OF_TURN_TOKEN
+    INSTRUCTION_END   = END_OF_TURN_TOKEN
 
     if masking_type == "generation":
         return {
+            # "Between newline after assistant and <end_of_turn>"
             "only_return_on_tokens_between": [
                 is_at_newline_after_assistant,
-                INSTRUCTION_END,
+                1,
             ],
             "only_choose_prompt_tokens_between": [
                 is_at_newline_after_user,
                 INSTRUCTION_END,
             ],
-            "only_probe_tokens_between": [is_token_after_assistant, INSTRUCTION_END],
+            # "Between token_after_assistant and <end_of_turn>"
+            "only_probe_tokens_between": [
+                is_token_after_assistant,
+                1,
+            ],
         }
 
     elif masking_type == "instruction":
         return {
+            # "Between newline after assistant and <end_of_turn>"
             "only_return_on_tokens_between": [
                 is_at_newline_after_assistant,
-                INSTRUCTION_END,
+                1,
             ],
+            # "Between newline after user and <end_of_turn>"
             "only_choose_prompt_tokens_between": [
                 is_at_newline_after_user,
                 INSTRUCTION_END,
             ],
+            # "Between token_after_assistant and token_after_newline"
             "only_probe_tokens_between": [
                 is_token_after_assistant,
-                is_at_token_after_newline,
+                1,
             ],
         }
     else:
@@ -188,7 +279,7 @@ def main():
     name = f"{model_type}_lora_oat_{masking_type}_{'nonlinear' if args.probe_type == 'nonlinear' else 'linear'}"
 
     os.makedirs(probes_folder, exist_ok=True)
-    
+
     # Load model and dataset
     if model_type == "llama3":
         encoder = EleutherSparseAutoencoder.load_llama3_sae(None, instruct=True)
@@ -200,6 +291,17 @@ def main():
         jailbreaks_dataset = load_dataset(
             "Mechanistic-Anomaly-Detection/gemma2-jailbreaks"
         )
+    elif model_type == "qwen2.5":
+        encoder = QwenCoderWrapper.load_qwen_coder(
+            model_name="Qwen/Qwen2.5-Coder-7B-Instruct",
+            device="cuda",
+            trust_remote_code=True,
+            load_in_8bit=False  # or True if you want
+        )
+        # You might also want to load a specialized dataset for Qwen, e.g.:
+        # jailbreaks_dataset = load_dataset("YourOrg/qwen25-jailbreaks")
+        # If you want to reuse the gemma or llama dataset, simply do:
+        jailbreaks_dataset = load_dataset("Mechanistic-Anomaly-Detection/qwen25-jailbreaks")
 
     forget_examples_train = sample_examples_from_datasets(
         [jailbreaks_dataset["circuit_breakers_train"]], [1.0]
@@ -227,6 +329,7 @@ def main():
     _, forget_examples_val_prompts, _ = split_dataset(forget_examples_train_prompts)
 
     ranges = get_token_ranges(masking_type)
+    print("Ranges:", ranges)
     only_return_on_tokens_between = ranges["only_return_on_tokens_between"]
     only_choose_prompt_tokens_between = ranges["only_choose_prompt_tokens_between"]
     only_probe_tokens_between = ranges["only_probe_tokens_between"]
