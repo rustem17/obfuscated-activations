@@ -72,6 +72,7 @@ def get_probe_scores(
                     batch = layer_activations[i : i + batch_size].to(device)
                     with torch.autocast(device_type=device):
                         batch_scores = probe.predict(batch)
+                        batch_scores = batch_scores.to(torch.float32)
                         batch_scores = (batch_scores.detach().cpu().numpy() * 2 - 1) * 3
                     layer_scores.append(batch_scores)
 

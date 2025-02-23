@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from peft import LoraConfig, PeftModel, get_peft_model
 from torch import nn
 from tqdm.auto import tqdm
+import wandb
 
 from .attacks import *
 from .utils import convert_seconds_to_time_str, get_valid_token_mask
@@ -427,6 +428,75 @@ def train_online_probe(
     softprompt_evals_data={},
     **kwargs,
 ):
+    # Get model name from encoder
+    if hasattr(encoder, 'model_name'):
+        model_name = encoder.model_name
+    elif hasattr(encoder.model, 'config'):
+        model_name = encoder.model.config._name_or_path
+    else:
+        model_name = type(encoder.model).__name__
+
+    # Extract probe type from create_probe_fn
+    probe_type = "linear" if "Linear" in create_probe_fn.__name__ else "nonlinear"
+
+    wandb.init(
+        project="obfuscated-activations",
+        config={
+            # Model metadata
+            "model": {
+                "name": model_name,
+                "num_layers": len(layers),
+                "layers_used": layers,
+            },
+            # Probe metadata
+            "probe": {
+                "type": probe_type,
+                "learning_rate": probe_lr,
+            },
+            # LoRA metadata
+            "lora": {
+                "enabled": use_lora_adapter,
+                "learning_rate": adapter_lr,
+                "params": lora_params,
+            },
+            # Training metadata
+            "training": {
+                "adversarial": adversarial_training,
+                "batch_size": batch_size,
+                "grad_accumulation_steps": n_grad_accum,
+                "max_steps": n_steps,
+                "kl_penalty": kl_penalty,
+                "max_sequence_length": max_length,
+            },
+            # Dataset metadata
+            "dataset": {
+                "num_positive_examples": len(positive_examples),
+                "num_negative_examples": len(negative_examples),
+            },
+            # Adversarial training params
+            "adversarial": {
+                "epsilon": epsilon,
+                "pgd_iterations": pgd_iterations,
+                "start_step": start_adv_training_at_step,
+                "adversary_lr": adversary_lr,
+                "freeze_probes": freeze_probes_during_adversarial_training,
+                "freeze_lora_warmup": freeze_lora_during_warmup,
+            },
+            # Masking configuration
+            "masking": {
+                "return_on_tokens": str(only_return_on_tokens_between),
+                "choose_prompt_tokens": str(only_choose_prompt_tokens_between),
+                "probe_tokens": str(only_probe_tokens_between),
+            },
+        },
+        tags=[
+            model_name,
+            probe_type,
+            "adversarial" if adversarial_training else "standard",
+            "lora" if use_lora_adapter else "no-lora"
+        ]
+    )
+
     assert n_grad_accum == 0 or n_steps % n_grad_accum == 0
 
     # Initialize probes and optimizers for each layer
@@ -619,6 +689,13 @@ def train_online_probe(
                             probes=probes,
                             **softprompt_evals_data,
                         )
+
+                        wandb.log({
+                            "eval/jailbreak_rate": results["jailbreak_rate"],
+                            "eval/avg_positive_score": results["avg_positive_score"],
+                            "eval/avg_negative_score": results["avg_negative_score"],
+                            "step": current_step,
+                        })
 
                         info["softprompt_evals"].append(results)
                         print("Jailbreak Success Rate:", results["jailbreak_rate"])
@@ -817,6 +894,21 @@ def train_online_probe(
                 )
                 avg_total_loss = avg_probe_loss + avg_kl_loss
 
+                metrics = {
+                    "train/total_loss": avg_total_loss,
+                    "train/probe_loss": avg_probe_loss,
+                    "train/kl_loss": avg_kl_loss,
+                    "step": current_step,
+                }
+
+                if adversarial_training:
+                    metrics.update({
+                        "train/pgd_toward_loss": avg_toward_pgd_loss,
+                        "train/pgd_probe_loss": avg_probe_pgd_loss,
+                    })
+
+                wandb.log(metrics)
+
                 log_message = (
                     f"Step: {current_step}/{n_steps}, "
                     f"Time: {convert_seconds_to_time_str(time.time() - start_time)}, "
@@ -844,6 +936,24 @@ def train_online_probe(
 
             pbar.update(1)  # Update progress bar
 
+    try:
+        # At the end, log final metrics to summary
+        wandb.run.summary.update({
+            "final_probe_loss": avg_probe_loss,
+            "final_kl_loss": avg_kl_loss,
+            "final_total_loss": avg_total_loss,
+            "training_duration": time.time() - start_time,
+        })
+
+        if adversarial_training:
+            wandb.run.summary.update({
+                "final_pgd_toward_loss": avg_toward_pgd_loss,
+                "final_pgd_probe_loss": avg_probe_pgd_loss,
+            })
+    except Exception as e:
+        print("oops, problem with unbound variables")
+
+    wandb.finish()
     return probes, lora_model, info
 
 

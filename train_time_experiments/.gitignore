@@ -24,3 +24,4 @@ eval_results*/
 .ipynb_checkpoints
 venv
 llama3-oat-generation-linear/
+probe_weights_comp_only/
