@@ -349,7 +349,7 @@ def main():
         n_steps=2048,
         run_softprompt_eval_every=256,
         pgd_iterations=32,
-        kl_penalty=10,
+        kl_penalty=0, # no kl loss (penalty=0). before that it was penalty=10
         device="cuda",
         only_return_on_tokens_between=only_return_on_tokens_between,
         only_choose_prompt_tokens_between=only_choose_prompt_tokens_between,
